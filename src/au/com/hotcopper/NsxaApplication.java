@@ -6,6 +6,7 @@ package au.com.hotcopper;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -43,6 +44,7 @@ import quickfix.SessionID;
 import quickfix.SessionNotFound;
 import quickfix.SessionSettings;
 import quickfix.UnsupportedMessageType;
+import quickfix.examples.ordermatch.Order;
 import quickfix.field.ApplVerID;
 import quickfix.field.AvgPx;
 import quickfix.field.BeginString;
@@ -62,9 +64,12 @@ import quickfix.field.LastQty;
 import quickfix.field.LastShares;
 import quickfix.field.LeavesQty;
 import quickfix.field.LocateReqd;
+import quickfix.field.MDReqID;
 import quickfix.field.MsgSeqNum;
 import quickfix.field.MsgType;
 import quickfix.field.NextExpectedMsgSeqNum;
+import quickfix.field.NoMDEntries;
+import quickfix.field.NoRelatedSym;
 import quickfix.field.OrdStatus;
 import quickfix.field.OrdType;
 import quickfix.field.OrderID;
@@ -75,12 +80,14 @@ import quickfix.field.Price;
 import quickfix.field.RefMsgType;
 import quickfix.field.RefSeqNum;
 import quickfix.field.ResetSeqNumFlag;
+import quickfix.field.SecurityExchange;
 import quickfix.field.SecurityReqID;
 import quickfix.field.SecurityListRequestType;
 import quickfix.field.SenderCompID;
 import quickfix.field.SessionRejectReason;
 import quickfix.field.Side;
 import quickfix.field.StopPx;
+import quickfix.field.SubscriptionRequestType;
 import quickfix.field.Symbol;
 import quickfix.field.TargetCompID;
 import quickfix.field.Text;
@@ -91,7 +98,13 @@ import quickfix.field.UserRequestType;
 import quickfix.field.UserStatus;
 import quickfix.field.UserStatusText;
 import quickfix.field.Username;
+import quickfix.fix42.MarketDataRequest;
 import quickfix.fix44.Logon;
+import quickfix.fix44.MarketDataSnapshotFullRefresh;
+import quickfix.fix44.SecurityList;
+import quickfix.fix44.SecurityListRequest;
+import quickfix.fix44.UserRequest;
+import quickfix.fix44.UserResponse;
 
 /**
  * @author Jason Pascoe
@@ -103,9 +116,12 @@ public class NsxaApplication extends quickfix.MessageCracker implements
 	private DefaultMessageFactory messageFactory = new DefaultMessageFactory();
 	private ObservableLogon observableLogon = new ObservableLogon();
 	private boolean isAvailable = true;
+	private boolean userLoggedIn = false;
 	private boolean isMissingField;
 	private IdGenerator idGenerator = new IdGenerator();
 	protected final Logger log = LoggerFactory.getLogger(getClass());
+	Username username = new Username("hot_ven1");
+	Password password = new Password("welcome2");
 
 	public NsxaApplication() {
 		System.out.println("Application");
@@ -153,26 +169,55 @@ public class NsxaApplication extends quickfix.MessageCracker implements
 		System.out.println("fromAdmin");
 		MessageProcessor messageProcessor = new MessageProcessor(message,
 				sessionID);
-		messageProcessor.run();
+		messageProcessor.process();
 	}
 
 	public void fromApp(quickfix.Message message, SessionID sessionID)
 			throws FieldNotFound, IncorrectDataFormat, IncorrectTagValue,
 			UnsupportedMessageType {
 		System.out.println("fromApp");
-		crack(message, sessionID);
-		// MessageProcessor messageProcessor = new MessageProcessor(message,
-		// sessionID);
-		// messageProcessor.run();
+		// crack(message, sessionID);
+		MessageProcessor messageProcessor = new MessageProcessor(message,
+				sessionID);
+		messageProcessor.process();
 	}
 
 	public class MessageProcessor implements Runnable {
-		private quickfix.Message message;
+		private Message message;
 		private SessionID sessionID;
+		private UserResponse userResponse;
+		private MarketDataSnapshotFullRefresh marketDataSnapshotFullRefresh;
+		private SecurityList securityList;
+		private List<MarketDataSnapshotFullRefresh.NoMDEntries> noMDEntries = new ArrayList<MarketDataSnapshotFullRefresh.NoMDEntries>();
 
 		public MessageProcessor(quickfix.Message message, SessionID sessionID) {
-			this.message = message;
 			this.sessionID = sessionID;
+			this.message = message;
+			try {
+				if (message.getHeader().isSetField(MsgType.FIELD)) {
+					String msgType = message.getHeader().getString(
+							MsgType.FIELD);
+					if (msgType
+							.equals(MsgType.MARKET_DATA_SNAPSHOT_FULL_REFRESH)) {
+						this.marketDataSnapshotFullRefresh = (MarketDataSnapshotFullRefresh) message;
+					} else if (msgType
+							.equals(MsgType.MARKET_DATA_INCREMENTAL_REFRESH)) {
+
+					} else if (msgType.equals(MsgType.SECURITY_LIST)) {
+						this.securityList = (SecurityList) message;
+
+					} else if (msgType.equals(MsgType.NEWS)) {
+
+					} else if (msgType.equals(MsgType.USER_RESPONSE)) {
+						this.userResponse = (UserResponse) message;
+					} else if (msgType.equals(MsgType.BUSINESS_MESSAGE_REJECT)) {
+
+					}
+				}
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+
 		}
 
 		public void run() {
@@ -180,9 +225,6 @@ public class NsxaApplication extends quickfix.MessageCracker implements
 				MsgType msgType = new MsgType();
 				if (isAvailable) {
 					if (message.getHeader().isSetField(DeliverToCompID.FIELD)) {
-						// Send Message
-						// sendSessionReject(message,
-						// SessionRejectReason.COMPID_PROBLEM);
 					}
 				}
 			} catch (Exception e) {
@@ -192,14 +234,67 @@ public class NsxaApplication extends quickfix.MessageCracker implements
 
 		public void process() {
 			try {
-				MsgType msgType = new MsgType();
-				if (isAvailable) {
-					if (message.getHeader().isSetField(DeliverToCompID.FIELD)) {
-						// Send Message
-						sendSessionReject(message,
-								SessionRejectReason.COMPID_PROBLEM);
-					}
-				}
+                if (message.getHeader().isSetField(MsgType.FIELD)) {
+                    String msgType = message.getHeader().getString(MsgType.FIELD);
+                    if (msgType.equals(MsgType.MARKET_DATA_SNAPSHOT_FULL_REFRESH)) {
+                        System.out.println("MARKET_DATA_SNAPSHOT_FULL_REFRESH");
+                        log.debug("MARKET_DATA_SNAPSHOT_FULL_REFRESH");
+                        
+                        MarketData marketData = new MarketData();
+                        Current current = new Current();
+
+                        SecurityExchange securityExchange = null;
+                        securityExchange = this.marketDataSnapshotFullRefresh.getSecurityExchange();
+                        
+                        if (securityExchange.getValue() == "NSX") {
+                        	current.set(this.marketDataSnapshotFullRefresh.getSymbol());
+                        	NoMDEntries noMarketDataEntries = this.marketDataSnapshotFullRefresh.getNoMDEntries();
+                       	
+                        }
+						
+                        
+                        
+                        
+                        
+                    } else if (msgType.equals(MsgType.MARKET_DATA_INCREMENTAL_REFRESH)) {
+                        System.out.println("MARKET_DATA_INCREMENTAL_REFRESH");
+                        log.debug("MARKET_DATA_INCREMENTAL_REFRESH");
+                    } else if (msgType.equals(MsgType.SECURITY_LIST)) {
+                        System.out.println("SECURITY_LIST");
+                        log.debug("SECURITY_LIST");
+                    } else if (msgType.equals(MsgType.NEWS)) {
+                        System.out.println("NEWS");
+                        log.debug("NEWS");
+                        
+                        SecurityList securityList = new SecurityList();
+                        
+                    } else if (msgType.equals(MsgType.USER_RESPONSE)) {
+                        System.out.println("USER_RESPONSE");
+                        log.debug("USER_RESPONSE");
+                        
+                        UserStatus userStatus = this.userResponse.getUserStatus();
+                        if (userStatus.getValue()==userStatus.LOGGED_IN){
+                        	userLoggedIn = true;
+                        } else if (userStatus.getValue()==userStatus.NOT_LOGGED_IN){
+                        	userLoggedIn = false;
+                        	sendUserRequest(this.sessionID);
+                        } else if (userStatus.getValue()==userStatus.PASSWORD_CHANGED){
+                        	userLoggedIn = false;
+                        } else if (userStatus.getValue()==userStatus.PASSWORD_INCORRECT){
+                        	userLoggedIn = false;
+                        } else if (userStatus.getValue()==userStatus.OTHER){
+                        	userLoggedIn = false;
+                        }
+                        
+                    } else if (msgType.equals(MsgType.BUSINESS_MESSAGE_REJECT)) {
+                        System.out.println("BUSINESS_MESSAGE_REJECT");
+                        log.debug("BUSINESS_MESSAGE_REJECT");
+                        sendSecurityListRequest(this.sessionID);
+                    } else {
+                        System.out.println(msgType);
+                        log.debug(msgType);
+                    }
+                }
 			} catch (Exception e) {
 				e.printStackTrace();
 			}
@@ -209,27 +304,38 @@ public class NsxaApplication extends quickfix.MessageCracker implements
 	protected void onMessage(quickfix.Message message, SessionID sessionID)
 			throws FieldNotFound, IncorrectTagValue {
 		if (message.getHeader().isSetField(MsgType.FIELD)) {
-			String msgType = message.getHeader().getString(MsgType.FIELD);
-			switch (msgType) {
-				case (MsgType.MARKET_DATA_SNAPSHOT_FULL_REFRESH): {
-					System.out.println("MARKET_DATA_SNAPSHOT_FULL_REFRESH");
-					log.debug("MARKET_DATA_SNAPSHOT_FULL_REFRESH");
-				}
-				case (MsgType.MARKET_DATA_INCREMENTAL_REFRESH): {
-					System.out.println("MARKET_DATA_INCREMENTAL_REFRESH");
-					log.debug("MARKET_DATA_INCREMENTAL_REFRESH");
-				}
-				case (MsgType.SECURITY_LIST): {
-					System.out.println("SECURITY_LIST");
-					log.debug("SECURITY_LIST");
-				}
-				case (MsgType.NEWS): {
-					System.out.println("NEWS");
-					log.debug("NEWS");
-				}
+			String msgType = message.getHeader().getString(MsgType.FIELD)
+					.toString();
+			if (msgType == MsgType.MARKET_DATA_SNAPSHOT_FULL_REFRESH.toString()) {
+				System.out.println("MARKET_DATA_SNAPSHOT_FULL_REFRESH");
+				log.debug("MARKET_DATA_SNAPSHOT_FULL_REFRESH");
+			} else if (msgType == MsgType.MARKET_DATA_INCREMENTAL_REFRESH
+					.toString()) {
+				System.out.println("MARKET_DATA_INCREMENTAL_REFRESH");
+				log.debug("MARKET_DATA_INCREMENTAL_REFRESH");
+			} else if (msgType == MsgType.SECURITY_LIST.toString()) {
+				System.out.println("SECURITY_LIST");
+				log.debug("SECURITY_LIST");
+			} else if (msgType == MsgType.NEWS.toString()) {
+				System.out.println("NEWS");
+				log.debug("NEWS");
 			}
 		}
-		//throw new UnsupportedMessageType();
+		// throw new UnsupportedMessageType();
+	}
+
+	public void onMessage(MarketDataSnapshotFullRefresh message,
+			SessionID sessionID) throws FieldNotFound, UnsupportedMessageType,
+			IncorrectTagValue {
+		MarketDataSnapshotFullRefresh.NoMDEntries noMDEntries = new MarketDataSnapshotFullRefresh.NoMDEntries();
+
+		int mdEntryCount = message.getInt(NoMDEntries.FIELD);
+
+		for (int i = 1; i <= mdEntryCount; ++i) {
+			message.getGroup(i, noMDEntries);
+			String symbol = noMDEntries.getString(Symbol.FIELD);
+			System.err.println("*** market data: " + symbol);
+		}
 	}
 
 	private void sendSessionReject(Message message, int rejectReason)
@@ -323,18 +429,19 @@ public class NsxaApplication extends quickfix.MessageCracker implements
 
 	private void sendUserRequest(SessionID sessionID) throws SessionNotFound {
 		try {
-			UserRequestID userRequestID = new UserRequestID(
-					idGenerator.genUserID());
-			UserRequestType userRequestType = new UserRequestType(
-					UserRequestType.LOGONUSER);
-			Username username = new Username("hot_ven1");
-			Password password = new Password("welcome2");
+			if (!userLoggedIn) {
+				UserRequestID userRequestID = new UserRequestID(
+						idGenerator.genUserID());
+				UserRequestType userRequestType = new UserRequestType(
+						UserRequestType.LOGONUSER);
 
-			quickfix.fix44.UserRequest userRequest = new quickfix.fix44.UserRequest(
-					userRequestID, userRequestType, username);
-			userRequest.set(password);
+				UserRequest userRequest = new UserRequest(userRequestID,
+						userRequestType, username);
+				userRequest.set(password);
 
-			Session.sendToTarget(userRequest, sessionID);
+				Session.sendToTarget(userRequest, sessionID);
+			}
+
 		} catch (SessionNotFound e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -348,7 +455,7 @@ public class NsxaApplication extends quickfix.MessageCracker implements
 		SecurityListRequestType securityListRequestType = new SecurityListRequestType(
 				0);
 
-		quickfix.fix44.SecurityListRequest securityListRequest = new quickfix.fix44.SecurityListRequest(
+		SecurityListRequest securityListRequest = new SecurityListRequest(
 				securityReqID, securityListRequestType);
 
 		Session.sendToTarget(securityListRequest, sessionID);
@@ -387,11 +494,7 @@ public class NsxaApplication extends quickfix.MessageCracker implements
 	private ApplVerID getApplVerID(Session session, Message message) {
 		System.out.println("ApplVerID");
 		String beginString = session.getSessionID().getBeginString();
-		if (FixVersions.BEGINSTRING_FIXT11.equals(beginString)) {
-			return new ApplVerID(ApplVerID.FIX50);
-		} else {
-			return MessageUtils.toApplVerID(beginString);
-		}
+		return MessageUtils.toApplVerID(beginString);
 	}
 
 	protected void logError(SessionID sessionID, IoSession protocolSession,
